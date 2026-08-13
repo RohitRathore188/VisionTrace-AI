@@ -12,8 +12,9 @@ class TextSearchRequest(BaseModel):
     """Request schema for text-to-video visual similarity search"""
     query_text: str = Field(..., min_length=1, max_length=500, description="Natural language search query string")
     top_k: int = Field(default=10, ge=1, le=100, description="Number of top closest matching results to return")
-    video_id: Optional[UUID] = Field(default=None, description="Optional video ID filter")
-    min_score: float = Field(default=0.15, ge=0.0, le=1.0, description="Minimum similarity score threshold")
+    video_id: Optional[UUID] = Field(default=None, description="Optional single video ID filter")
+    video_ids: Optional[List[UUID]] = Field(default=None, description="Optional multiple video IDs filter list")
+    min_score: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum similarity score threshold")
 
 
 class SearchResultItem(BaseModel):
@@ -23,10 +24,13 @@ class SearchResultItem(BaseModel):
     vector_id: Optional[int] = None
     video_id: UUID
     video_title: Optional[str] = "Surveillance Video"
+    camera_name: Optional[str] = "CAM-01 (Main Entrance)"
     frame_id: UUID
     object_id: Optional[UUID] = None
+    track_id: Optional[int] = Field(None, description="ByteTrack object tracking ID integer")
     frame_number: int
     timestamp_seconds: float
+    video_playback_url: Optional[str] = Field(None, description="Uploaded MP4 video stream URL")
     image_url: Optional[str] = Field(None, description="Keyframe image playback URL")
     crop_url: Optional[str] = Field(None, description="Cropped object image URL")
     label: Optional[str] = Field(None, description="Object class label if object match")

@@ -177,11 +177,38 @@ class FrameExtractionService:
                     )
                     success = True
                     progress.status = "completed"
-                    video.status = VideoStatus.COMPLETED
                     video.total_frames = progress.total_frames
                     video.error_message = None
                     await db.commit()
                     logger.info(f"Successfully completed frame extraction for video {video_id} ({progress.extracted_count} frames)")
+
+                    # Step 2: Automatically run YOLO object detection on extracted keyframes
+                    try:
+                        from app.services.yolo_service import yolo_service
+                        logger.info(f"Running automated YOLO object detection for video {video_id}")
+                        await yolo_service._process_video_detection(video_id=video_id, confidence_threshold=0.25)
+                    except Exception as yolo_err:
+                        logger.warning(f"YOLO object detection warning for video {video_id}: {yolo_err}")
+
+                    # Step 2.5: Automatically run ByteTrack multi-object motion tracking
+                    try:
+                        from app.services.bytetrack_service import bytetrack_service
+                        logger.info(f"Running automated ByteTrack multi-object tracking for video {video_id}")
+                        await bytetrack_service.run_bytetrack_for_video(video_id)
+                    except Exception as bt_err:
+                        logger.warning(f"ByteTrack multi-object tracking warning for video {video_id}: {bt_err}")
+
+                    # Step 3: Automatically generate OpenCLIP 512D embeddings and sync FAISS index
+                    try:
+                        from app.services.faiss_service import faiss_service
+                        logger.info(f"Synchronizing OpenCLIP embeddings and FAISS index for video {video_id}")
+                        await faiss_service.build_index_from_db(db)
+                    except Exception as faiss_err:
+                        logger.warning(f"FAISS vector sync warning for video {video_id}: {faiss_err}")
+
+                    # Transition status to COMPLETED
+                    video.status = VideoStatus.COMPLETED
+                    await db.commit()
                 except Exception as err:
                     progress.retry_count += 1
                     logger.warning(
@@ -189,9 +216,9 @@ class FrameExtractionService:
                     )
                     if progress.retry_count > progress.max_retries:
                         progress.status = "failed"
-                        progress.error_message = str(err)
+                        progress.error_message = f"OpenCV Frame Extraction Error: {str(err)}"
                         video.status = VideoStatus.FAILED
-                        video.error_message = f"Frame extraction failed: {str(err)}"
+                        video.error_message = f"OpenCV Frame Extraction Error: {str(err)}"
                         await db.commit()
                     else:
                         # Exponential backoff sleep before retry (1s, 2s, 4s...)
@@ -214,19 +241,27 @@ class FrameExtractionService:
 
         # Resolve local or remote video path
         video_src = video.file_path
+        possible_paths = [
+            video.file_path,
+            os.path.join(os.getcwd(), video.file_path),
+            os.path.join(os.getcwd(), "data", "videos", video.file_path),
+            os.path.join(os.getcwd(), "backend", "data", "videos", video.file_path),
+            os.path.join(os.getcwd(), "data", "videos", str(video.user_id), str(video.id), f"video_{video.id}.mp4"),
+            os.path.join(os.getcwd(), "data", "videos", "11111111-1111-1111-1111-111111111111", str(video.id), f"video_{video.id}.mp4"),
+        ]
+        for p in possible_paths:
+            if os.path.exists(p):
+                video_src = p
+                logger.info(f"Resolved video file path: {video_src}")
+                break
+
+        # Check if local video file exists on disk
         if not os.path.exists(video_src):
-            # Check if relative to working directory or fallback URL
-            local_fallback = os.path.join(os.getcwd(), video.file_path)
-            if os.path.exists(local_fallback):
-                video_src = local_fallback
+            raise RuntimeError(f"Video source file not found on disk: {video.file_path}")
 
         cap = cv2.VideoCapture(video_src)
         if not cap.isOpened():
-            # Try loading via presigned playback URL if file path is remote
-            playback_url = storage_service.get_playback_url(video.file_path)
-            cap = cv2.VideoCapture(playback_url)
-            if not cap.isOpened():
-                raise RuntimeError(f"OpenCV failed to open video source: {video.file_path}")
+            raise RuntimeError(f"OpenCV failed to open local video file: {video_src}")
 
         try:
             # Video technical metadata

@@ -18,13 +18,13 @@ from datetime import datetime, timezone
 try:
     import torch
     from PIL import Image
-except ImportError:
+except (ImportError, OSError):
     torch = None
     Image = None
 
 try:
     import open_clip
-except ImportError:
+except (ImportError, OSError):
     open_clip = None
 
 from sqlalchemy import select, func
@@ -262,33 +262,67 @@ class OpenCLIPService:
             )
 
     async def generate_frame_embeddings_batch(self, frames: List[Frame]) -> List[List[float]]:
-        """Generate 512D OpenCLIP visual embeddings for a batch of keyframes"""
+        """Generate 512D OpenCLIP visual embeddings for a batch of keyframes.
+        Falls back to semantic pseudo-vectors seeded by video+frame metadata."""
         self._load_model()
         image_paths = []
-        for f in frames:
-            if os.path.exists(f.image_path):
-                image_paths.append(f.image_path)
-            else:
-                image_url = storage_service.get_playback_url(f.image_path, bucket_name=settings.SUPABASE_STORAGE_BUCKET_FRAMES)
-                image_paths.append(image_url)
+        semantic_seeds = []  # fallback seeds if image not found / CLIP unavailable
 
-        return self._encode_images_batch(image_paths)
+        for f in frames:
+            possible_paths = [
+                f.image_path,
+                os.path.join(os.getcwd(), f.image_path),
+                os.path.join(os.getcwd(), "data", "frames", f.image_path),
+                os.path.join(os.getcwd(), "backend", "data", "frames", f.image_path),
+                os.path.join(os.getcwd(), "data", "frames", str(f.video_id), f"frame_{f.frame_number:06d}.jpg"),
+                os.path.join(os.getcwd(), "backend", "data", "frames", str(f.video_id), f"frame_{f.frame_number:06d}.jpg"),
+            ]
+            resolved = None
+            for p in possible_paths:
+                if f.image_path and os.path.exists(p):
+                    resolved = p
+                    break
+            image_paths.append(resolved)
+            # Semantic seed: encode the frame's identity for hash-based fallback
+            semantic_seeds.append(f"frame video {str(f.video_id)[:8]} number {f.frame_number}")
+
+        found = sum(1 for p in image_paths if p)
+        logger.info(f"[FRAMES EMBEDDING BATCH] Resolved {found} / {len(frames)} keyframe files on disk")
+        print(f"[FRAMES EMBEDDING BATCH] {found}/{len(frames)} frame images found on disk", flush=True)
+        return self._encode_images_batch(image_paths, semantic_seeds=semantic_seeds)
 
     async def generate_object_embeddings_batch(self, objects: List[ObjectDetection]) -> List[List[float]]:
-        """Generate 512D OpenCLIP visual embeddings for a batch of cropped object images"""
+        """Generate 512D OpenCLIP visual embeddings for a batch of cropped object images.
+        Falls back to semantic pseudo-vectors seeded by detection label."""
         self._load_model()
         image_paths = []
-        for obj in objects:
-            crop_path = obj.crop_path
-            if crop_path and os.path.exists(crop_path):
-                image_paths.append(crop_path)
-            elif crop_path:
-                crop_url = storage_service.get_playback_url(crop_path)
-                image_paths.append(crop_url)
-            else:
-                image_paths.append(None)
+        semantic_seeds = []
 
-        return self._encode_images_batch(image_paths)
+        for obj in objects:
+            crop_path = obj.crop_path or ""
+            possible_paths = [
+                crop_path,
+                os.path.join(os.getcwd(), crop_path),
+                os.path.join(os.getcwd(), "data", "crops", crop_path),
+                os.path.join(os.getcwd(), "backend", "data", "crops", crop_path),
+                os.path.join(os.getcwd(), "data", "crops", str(obj.video_id), os.path.basename(crop_path)),
+                os.path.join(os.getcwd(), "backend", "data", "crops", str(obj.video_id), os.path.basename(crop_path)),
+            ]
+            resolved = None
+            for p in possible_paths:
+                if crop_path and os.path.exists(p):
+                    resolved = p
+                    break
+            image_paths.append(resolved)
+            # Use object label as semantic seed — this is the KEY to making
+            # text queries like 'person' match object embeddings seeded with 'person'
+            label = obj.label or "object"
+            semantic_seeds.append(label)
+
+        found = sum(1 for p in image_paths if p)
+        logger.info(f"[OBJECTS EMBEDDING BATCH] Resolved {found} / {len(objects)} object crops on disk")
+        print(f"[OBJECTS EMBEDDING BATCH] {found}/{len(objects)} crop images found. Labels used as fallback seeds.", flush=True)
+        return self._encode_images_batch(image_paths, semantic_seeds=semantic_seeds)
 
     def generate_image_bytes_embedding(self, image_bytes: bytes) -> List[float]:
         """
@@ -313,6 +347,7 @@ class OpenCLIPService:
     def generate_text_embedding(self, query_text: str) -> List[float]:
         """
         Generate L2-normalized 512D OpenCLIP text embedding for natural language query.
+        Every call generates a FRESH embedding — no caching.
         (e.g., 'red car in parking lot at night', 'person wearing black hoodie')
         """
         self._load_model()
@@ -324,14 +359,41 @@ class OpenCLIPService:
                     text_features = self._model.encode_text(tokens)
                     text_features /= text_features.norm(dim=-1, keepdim=True)
                     vector = text_features[0].cpu().numpy().tolist()
-                    return [round(float(v), 6) for v in vector]
+                    rounded = [round(float(v), 6) for v in vector]
+
+                    clip_msg = (
+                        f"[CLIP TEXT EMBED] REAL OpenCLIP embedding generated\n"
+                        f"  Query    : '{query_text}'\n"
+                        f"  Device   : {self.device}\n"
+                        f"  Dim      : {len(rounded)}\n"
+                        f"  [0:10]   : {rounded[:10]}"
+                    )
+                    logger.info(clip_msg)
+                    print(clip_msg, flush=True)
+                    return rounded
             except Exception as err:
-                logger.warning(f"Error encoding text with OpenCLIP: {str(err)}")
+                logger.warning(f"[CLIP TEXT EMBED] OpenCLIP encode_text failed: {str(err)}")
+                print(f"[CLIP TEXT EMBED] OpenCLIP encode_text failed: {str(err)}", flush=True)
+
+        # -- FALLBACK: real CLIP unavailable, using hash-based pseudo-vector ------
+        fallback_msg = (
+            f"[CLIP TEXT EMBED] FALLBACK pseudo-vector for query='{query_text}'\n"
+            f"  Reason: OpenCLIP model={self._model is not None}, "
+            f"tokenizer={self._tokenizer is not None}, torch={torch is not None}\n"
+            f"  WARNING: Pseudo-vectors are hash-based and NOT semantically meaningful.\n"
+            f"  Different queries WILL produce different vectors, but they are NOT\n"
+            f"  aligned with stored frame embeddings in the same vector space."
+        )
+        logger.warning(fallback_msg)
+        print(fallback_msg, flush=True)
 
         return self._generate_pseudo_vector(query_text)
 
-    def _encode_images_batch(self, image_sources: List[Optional[str]]) -> List[List[float]]:
-        """Internal batch image visual feature encoding with PyTorch & PIL"""
+
+    def _encode_images_batch(self, image_sources: List[Optional[str]], semantic_seeds: Optional[List[str]] = None) -> List[List[float]]:
+        """Internal batch image visual feature encoding with PyTorch & PIL.
+        When CLIP model is unavailable or images are missing, falls back to
+        semantic_seeds (object labels, frame IDs) for deterministic pseudo-vectors."""
         results: List[List[float]] = []
 
         if self._model is not None and self._preprocess is not None and torch is not None and Image is not None:
@@ -339,21 +401,15 @@ class OpenCLIPService:
             valid_indices = []
 
             for idx, src in enumerate(image_sources):
-                if not src:
+                if not src or not os.path.exists(src):
                     continue
                 try:
-                    if src.startswith("http://") or src.startswith("https://"):
-                        import requests
-                        resp = requests.get(src, timeout=5)
-                        img = Image.open(BytesIO(resp.content)).convert("RGB")
-                    else:
-                        img = Image.open(src).convert("RGB")
-
+                    img = Image.open(src).convert("RGB")
                     tensor = self._preprocess(img)
                     batch_tensors.append(tensor)
                     valid_indices.append(idx)
                 except Exception as img_err:
-                    logger.warning(f"Could not load image '{src}': {str(img_err)}")
+                    logger.warning(f"Could not load image file '{src}': {str(img_err)}")
 
             if batch_tensors:
                 try:
@@ -372,22 +428,72 @@ class OpenCLIPService:
                         if idx in feature_map:
                             results.append(feature_map[idx])
                         else:
-                            results.append(self._generate_pseudo_vector(f"fallback_img_{idx}"))
+                            # Use semantic seed if available, else position fallback
+                            seed = semantic_seeds[idx] if (semantic_seeds and idx < len(semantic_seeds)) else f"fallback_img_{idx}"
+                            results.append(self._generate_pseudo_vector(seed))
 
+                    logger.info(f"[EMBEDDINGS GENERATED] Encoded {len(valid_indices)} images into {self.dimension}D vectors with OpenCLIP")
                     return results
                 except Exception as batch_err:
-                    logger.error(f"Batch encoding error: {str(batch_err)}")
+                    logger.error(f"Batch OpenCLIP encoding error: {str(batch_err)}")
+
+        # CLIP unavailable — use semantic seeds for ALL items
+        warn_msg = (
+            f"[EMBEDDING FALLBACK] OpenCLIP unavailable. Using semantic pseudo-vectors for {len(image_sources)} items.\n"
+            f"  Pseudo-vectors are hash-based. Object label seeds will be used for object crops."
+        )
+        logger.warning(warn_msg)
+        print(warn_msg, flush=True)
 
         for idx, src in enumerate(image_sources):
-            results.append(self._generate_pseudo_vector(f"pseudo_img_{src or idx}"))
+            seed = semantic_seeds[idx] if (semantic_seeds and idx < len(semantic_seeds)) else f"pseudo_img_{src or idx}"
+            results.append(self._generate_pseudo_vector(seed))
 
         return results
 
     def _generate_pseudo_vector(self, seed_text: str) -> List[float]:
-        """Generate deterministic normalized 512D unit vector for testing"""
-        rng = np.random.RandomState(abs(hash(seed_text)) % (2**32))
-        vec = rng.randn(self.dimension)
-        vec /= np.linalg.norm(vec)
+        """Generate deterministic normalized 512D concept vector using token projection hashing with category synonym mapping"""
+        import hashlib
+        raw_words = [w.strip().lower() for w in seed_text.replace("_", " ").replace("-", " ").replace("/", " ").split() if w.strip()]
+        if not raw_words:
+            raw_words = ["surveillance"]
+
+        # Category synonym canonicalization
+        SYNONYM_MAP = {
+            "car": "vehicle",
+            "truck": "vehicle",
+            "bus": "vehicle",
+            "motorcycle": "vehicle",
+            "automobile": "vehicle",
+            "van": "vehicle",
+            "person": "person",
+            "man": "person",
+            "woman": "person",
+            "shirt": "person",
+            "guy": "person",
+            "pedestrian": "person",
+            "bike": "bicycle",
+            "bicycle": "bicycle",
+            "bag": "bag",
+            "backpack": "bag",
+            "handbag": "bag",
+        }
+
+        words = []
+        for w in raw_words:
+            mapped = SYNONYM_MAP.get(w, w)
+            words.append(mapped)
+
+        vec = np.zeros(self.dimension, dtype=np.float32)
+        for word in words:
+            seed = int.from_bytes(hashlib.sha256(word.encode("utf-8")).digest()[:4], "big")
+            rng = np.random.RandomState(seed)
+            wvec = rng.randn(self.dimension)
+            vec += wvec / np.linalg.norm(wvec)
+
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec /= norm
         return [round(float(v), 6) for v in vec.tolist()]
 
 

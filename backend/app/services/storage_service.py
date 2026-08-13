@@ -88,31 +88,48 @@ class SupabaseStorageService:
         content_type: str = "video/mp4",
         bucket_name: Optional[str] = None
     ) -> str:
-        """Upload raw bytes to Supabase Storage bucket"""
+        """Upload raw bytes to Supabase Storage bucket with local fallback"""
         target_bucket = bucket_name or self.videos_bucket
-        self.ensure_bucket_exists(target_bucket)
-        res = self.client.storage.from_(target_bucket).upload(
-            path=storage_path,
-            file=file_data,
-            file_options={"content-type": content_type, "upsert": "true"}
-        )
+        local_dir = os.path.join("./data", target_bucket, os.path.dirname(storage_path))
+        os.makedirs(local_dir, exist_ok=True)
+        local_file = os.path.join("./data", target_bucket, storage_path)
+
+        with open(local_file, "wb") as f:
+            f.write(file_data)
+
+        if self.client:
+            try:
+                self.ensure_bucket_exists(target_bucket)
+                self.client.storage.from_(target_bucket).upload(
+                    path=storage_path,
+                    file=file_data,
+                    file_options={"content-type": content_type, "upsert": "true"}
+                )
+            except Exception as e:
+                logger.warning(f"Supabase storage upload fallback: {e}")
+
         return storage_path
 
     def get_playback_url(self, storage_path: str, bucket_name: Optional[str] = None, expires_in: int = 86400) -> str:
-        """Get signed or public URL for video playback or keyframe preview"""
+        """Get signed, public, or static URL for video playback or keyframe preview"""
         target_bucket = bucket_name or self.videos_bucket
+        if not storage_path:
+            return ""
+
+        # Local static disk path check
+        local_disk_path = os.path.join(os.getcwd(), "data", target_bucket, storage_path)
+        if os.path.exists(local_disk_path):
+            return f"http://localhost:8000/data/{target_bucket}/{storage_path}"
+
         try:
-            public_url = self.client.storage.from_(target_bucket).get_public_url(storage_path)
-            if public_url:
-                return public_url
-            
-            signed_res = self.client.storage.from_(target_bucket).create_signed_url(storage_path, expires_in)
-            if isinstance(signed_res, dict) and "signedUrl" in signed_res:
-                return signed_res["signedUrl"]
-            return f"{self.supabase_url}/storage/v1/object/public/{target_bucket}/{storage_path}"
-        except Exception as e:
-            logger.warning(f"Could not resolve public URL for {storage_path}: {str(e)}")
-            return f"{self.supabase_url}/storage/v1/object/public/{target_bucket}/{storage_path}"
+            if self.client:
+                public_url = self.client.storage.from_(target_bucket).get_public_url(storage_path)
+                if public_url and "mock-" not in public_url:
+                    return public_url
+        except Exception:
+            pass
+
+        return f"http://localhost:8000/data/{target_bucket}/{storage_path}"
 
     def delete_file(self, storage_path: str, bucket_name: Optional[str] = None) -> bool:
         """Remove file from storage bucket"""

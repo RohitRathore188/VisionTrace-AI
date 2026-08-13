@@ -81,6 +81,7 @@ class VideoResponse(VideoBase):
     created_at: datetime
     updated_at: datetime
     playback_url: Optional[str] = Field(None, description="Signed or public URL for video preview/playback")
+    thumbnail_url: Optional[str] = Field(None, description="Preview thumbnail image URL")
 
 
 class VideoStatusResponse(BaseModel):

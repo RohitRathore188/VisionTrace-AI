@@ -6,6 +6,7 @@ export interface TextSearchRequest {
   query_text: string
   top_k?: number
   video_id?: string
+  video_ids?: string[]
   min_score?: number
 }
 
@@ -15,10 +16,13 @@ export interface SearchResultItem {
   vector_id?: number
   video_id: string
   video_title?: string
+  camera_name?: string
   frame_id: string
   object_id?: string
+  track_id?: number
   frame_number: number
   timestamp_seconds: number
+  video_playback_url?: string
   image_url?: string
   crop_url?: string
   label?: string

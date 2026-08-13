@@ -1,12 +1,13 @@
 import React from 'react'
 import { Upload, Film, Tag, FileText, CheckCircle2 } from 'lucide-react'
 import { useVideoUpload } from '@/hooks/useVideoUpload'
+import { Video } from '@/types/video'
 import { Dropzone } from './Dropzone'
 import { VideoPreview } from './VideoPreview'
 import { UploadProgressBar } from './UploadProgressBar'
 
 interface VideoUploadCardProps {
-  onUploadSuccess?: () => void
+  onUploadSuccess?: (newVideo?: Video) => void
 }
 
 export const VideoUploadCard: React.FC<VideoUploadCardProps> = ({ onUploadSuccess }) => {
@@ -36,9 +37,9 @@ export const VideoUploadCard: React.FC<VideoUploadCardProps> = ({ onUploadSucces
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!file) return
-    await startUpload()
+    const uploaded = await startUpload()
     if (onUploadSuccess) {
-      onUploadSuccess()
+      onUploadSuccess(uploaded || undefined)
     }
   }
 

@@ -48,7 +48,7 @@ export interface VisualizationPoint {
   frame_number: number
 }
 
-export interface VisualizationTrack {
+export interface TrackVisualizationItem {
   track_id: number
   label: string
   points: VisualizationPoint[]
@@ -57,5 +57,12 @@ export interface VisualizationTrack {
 
 export interface VisualizationResponse {
   video_id: string
-  tracks: VisualizationTrack[]
+  tracks: TrackVisualizationItem[]
+}
+
+export interface ByteTrackRunResponse {
+  video_id: string
+  objects_updated: number
+  distinct_track_count: number
+  message: string
 }

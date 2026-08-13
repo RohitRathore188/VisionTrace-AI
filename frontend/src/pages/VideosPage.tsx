@@ -29,7 +29,7 @@ export const VideosPage: React.FC = () => {
       setVideos(data.items || [])
     } catch (err) {
       console.error('Failed to fetch videos:', err)
-    } fontally: {
+    } finally {
       setIsLoading(false)
       setIsRefreshing(false)
     }
@@ -59,28 +59,28 @@ export const VideosPage: React.FC = () => {
     switch (status) {
       case 'completed':
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow">
             <CheckCircle2 className="w-3.5 h-3.5" />
             <span>Ready / Indexed</span>
           </span>
         )
       case 'processing':
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-            <span>Processing</span>
+            <span>Processing Pipeline</span>
           </span>
         )
       case 'failed':
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20 shadow">
             <AlertCircle className="w-3.5 h-3.5" />
             <span>Failed</span>
           </span>
         )
       default:
         return (
-          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+          <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow">
             <Clock className="w-3.5 h-3.5" />
             <span>Pending</span>
           </span>
@@ -116,7 +116,7 @@ export const VideosPage: React.FC = () => {
 
           <Link
             to="/upload"
-            className="flex items-center space-x-2 text-xs font-bold px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg transition"
+            className="flex items-center space-x-2 text-xs font-bold px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-lg transition"
           >
             <span>+ Upload Video</span>
           </Link>
@@ -177,69 +177,80 @@ export const VideosPage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredVideos.map((video) => (
-              <div
-                key={video.id}
-                className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden hover:border-slate-700 transition flex flex-col"
-              >
-                {/* Thumbnail / Video Preview */}
-                <div className="relative aspect-video bg-slate-900 flex items-center justify-center border-b border-slate-800 overflow-hidden">
-                  {video.playbackUrl ? (
-                    <video src={video.playbackUrl} controls className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="flex flex-col items-center justify-center space-y-2 text-slate-500">
-                      <Play className="w-8 h-8 text-purple-400 opacity-60" />
-                      <span className="text-xs font-mono">No Preview</span>
+            {filteredVideos.map((video) => {
+              const previewImg = video.thumbnailUrl || (video.metadataJson && video.metadataJson.thumbnail_url)
+              return (
+                <div
+                  key={video.id}
+                  className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden hover:border-slate-700 transition flex flex-col justify-between"
+                >
+                  {/* Thumbnail / Video Preview */}
+                  <div className="relative aspect-video bg-slate-900 flex items-center justify-center border-b border-slate-800 overflow-hidden">
+                    {previewImg ? (
+                      <img src={previewImg} alt={video.title} className="w-full h-full object-cover" />
+                    ) : video.playbackUrl ? (
+                      <video src={video.playbackUrl} controls className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center space-y-2 text-slate-500">
+                        <Play className="w-8 h-8 text-purple-400 opacity-60" />
+                        <span className="text-xs font-mono">Frame Extraction Pending</span>
+                      </div>
+                    )}
+                    <div className="absolute top-2 right-2">{getStatusBadge(video.status)}</div>
+                  </div>
+
+                  {/* Metadata Body */}
+                  <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
+                    <div>
+                      <h4 className="font-bold text-slate-100 text-base line-clamp-1">{video.title}</h4>
+                      <p className="text-xs font-mono text-slate-500 mt-0.5 truncate">{video.id}</p>
                     </div>
-                  )}
-                  <div className="absolute top-2 right-2">{getStatusBadge(video.status)}</div>
+
+                    {video.errorMessage && (
+                      <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs font-mono text-red-300">
+                        <strong>Error:</strong> {video.errorMessage}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-3 gap-2 py-2 px-3 bg-slate-900/80 rounded-xl text-xs border border-slate-800/80">
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">Duration</span>
+                        <span className="font-semibold text-slate-300">{formatDuration(video.durationSeconds || 0)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">Resolution</span>
+                        <span className="font-semibold text-slate-300">
+                          {video.width && video.height ? `${video.width}x${video.height}` : 'N/A'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[10px]">File Size</span>
+                        <span className="font-semibold text-slate-300">{formatBytes(video.fileSizeBytes || 0)}</span>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/60">
+                      <Link
+                        to="/upload"
+                        className="flex items-center space-x-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600 hover:text-white transition"
+                      >
+                        <Scissors className="w-3.5 h-3.5" />
+                        <span>View Pipeline</span>
+                      </Link>
+
+                      <button
+                        onClick={() => handleDelete(video.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                        title="Delete Video Asset"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-
-                {/* Metadata Body */}
-                <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
-                  <div>
-                    <h4 className="font-bold text-slate-100 text-base line-clamp-1">{video.title}</h4>
-                    <p className="text-xs font-mono text-slate-500 mt-0.5 truncate">{video.id}</p>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2 py-2 px-3 bg-slate-900/80 rounded-xl text-xs border border-slate-800/80">
-                    <div>
-                      <span className="text-slate-500 block text-[10px]">Duration</span>
-                      <span className="font-semibold text-slate-300">{formatDuration(video.durationSeconds)}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block text-[10px]">Resolution</span>
-                      <span className="font-semibold text-slate-300">
-                        {video.width && video.height ? `${video.width}x${video.height}` : 'N/A'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 block text-[10px]">File Size</span>
-                      <span className="font-semibold text-slate-300">{formatBytes(video.fileSizeBytes || 0)}</span>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-800/60">
-                    <Link
-                      to="/upload"
-                      className="flex items-center space-x-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600 hover:text-white transition"
-                    >
-                      <Scissors className="w-3.5 h-3.5" />
-                      <span>Pipeline</span>
-                    </Link>
-
-                    <button
-                      onClick={() => handleDelete(video.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
-                      title="Delete Video Asset"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

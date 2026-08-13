@@ -430,6 +430,57 @@ class ByteTrackService:
             "trajectory": trajectory
         }
 
+    async def get_all_video_trajectories(
+        self,
+        db: AsyncSession,
+        video_id: uuid.UUID
+    ) -> Dict[str, Any]:
+        """Fetch all object trajectories for a video indexed by track_id"""
+        stmt = (
+            select(ObjectDetection)
+            .options(joinedload(ObjectDetection.frame))
+            .where(
+                ObjectDetection.video_id == video_id,
+                ObjectDetection.track_id.isnot(None)
+            )
+            .order_by(ObjectDetection.track_id.asc(), ObjectDetection.id.asc())
+        )
+        res = await db.execute(stmt)
+        objects = list(res.scalars().all())
+
+        tracks_dict: Dict[int, Dict[str, Any]] = {}
+        for obj in objects:
+            tid = obj.track_id
+            if tid not in tracks_dict:
+                tracks_dict[tid] = {
+                    "track_id": tid,
+                    "label": obj.label,
+                    "first_seen": obj.frame.timestamp_seconds if obj.frame else 0.0,
+                    "last_seen": obj.frame.timestamp_seconds if obj.frame else 0.0,
+                    "total_frames": 0,
+                    "trajectory": []
+                }
+            
+            ts = obj.frame.timestamp_seconds if obj.frame else 0.0
+            tracks_dict[tid]["last_seen"] = max(tracks_dict[tid]["last_seen"], ts)
+            tracks_dict[tid]["total_frames"] += 1
+            
+            bbox = obj.bounding_box
+            tracks_dict[tid]["trajectory"].append({
+                "object_id": str(obj.id),
+                "frame_id": str(obj.frame_id),
+                "frame_number": obj.frame.frame_number if obj.frame else 0,
+                "timestamp_seconds": ts,
+                "confidence": obj.confidence,
+                "bounding_box": bbox
+            })
+
+        return {
+            "video_id": str(video_id),
+            "total_tracks": len(tracks_dict),
+            "tracks": list(tracks_dict.values())
+        }
+
     async def get_visualization_payload(
         self,
         db: AsyncSession,

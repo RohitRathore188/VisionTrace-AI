@@ -11,6 +11,11 @@ from app.models.object import ObjectDetection
 from app.models.embedding import Embedding, VECTOR_DIMENSION
 from app.models.search_history import SearchHistory, SearchType
 from app.models.report import Report, ReportStatus
+from app.models.camera import Camera, CameraStatus
+from app.models.case import Case, CaseStatus, CasePriority
+from app.models.evidence import EvidenceItem, IntegrityStatus
+from app.models.alert import Alert, AlertSeverity, AlertStatus
+from app.models.audit import AuditLog
 
 __all__ = [
     "Role",
@@ -26,4 +31,15 @@ __all__ = [
     "SearchType",
     "Report",
     "ReportStatus",
+    "Camera",
+    "CameraStatus",
+    "Case",
+    "CaseStatus",
+    "CasePriority",
+    "EvidenceItem",
+    "IntegrityStatus",
+    "Alert",
+    "AlertSeverity",
+    "AlertStatus",
+    "AuditLog",
 ]

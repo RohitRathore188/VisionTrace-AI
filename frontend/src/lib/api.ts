@@ -20,9 +20,11 @@ const api: AxiosInstance = axios.create({
  */
 async function getAccessToken(): Promise<string | null> {
   try {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session?.access_token) {
-      return session.access_token
+    const sessionPromise = supabase.auth.getSession().then(({ data }) => data.session?.access_token || null)
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500))
+    const token = await Promise.race([sessionPromise, timeoutPromise])
+    if (token) {
+      return token
     }
   } catch (e) {
     console.warn('Supabase session check fallback:', e)

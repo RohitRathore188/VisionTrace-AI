@@ -13,12 +13,14 @@ export class SearchService {
     queryText: string,
     topK = 12,
     videoId?: string,
+    videoIds?: string[],
     minScore = 0.15
   ): Promise<SearchResponse> {
     const payload: TextSearchRequest = {
       query_text: queryText,
       top_k: topK,
       video_id: videoId,
+      video_ids: videoIds && videoIds.length > 0 ? videoIds : undefined,
       min_score: minScore,
     }
     const response = await api.post<SearchResponse>('/search/text', payload)
@@ -32,6 +34,7 @@ export class SearchService {
     imageFile: File,
     topK = 12,
     videoId?: string,
+    videoIds?: string[],
     minScore = 0.15
   ): Promise<SearchResponse> {
     const formData = new FormData()
@@ -40,6 +43,9 @@ export class SearchService {
     formData.append('min_score', minScore.toString())
     if (videoId) {
       formData.append('video_id', videoId)
+    }
+    if (videoIds && videoIds.length > 0) {
+      videoIds.forEach((vid) => formData.append('video_ids', vid))
     }
 
     const response = await api.post<SearchResponse>('/search/image', formData, {

@@ -220,9 +220,10 @@ export function useVideoUpload() {
         isUploading: false,
         isCompleted: true,
       })
+      return completedVideo
     } catch (err: any) {
       console.error('Upload failed:', err)
-      const errorMsg = err?.message || 'Upload failed. Please try again.'
+      const errorMsg = err?.response?.data?.error?.message || err?.message || 'Upload failed. Please try again.'
       setProgress((prev) => ({
         ...prev,
         isUploading: false,

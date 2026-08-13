@@ -18,7 +18,7 @@ export class VideoService {
    * Initialize video upload session
    */
   static async initUpload(payload: VideoUploadInitRequest): Promise<VideoUploadInitResponse> {
-    const response = await api.post<VideoUploadInitResponse>('/videos/upload/init', payload)
+    const response = await api.post<VideoUploadInitResponse>('/videos/upload/init', payload, { timeout: 60000 })
     return response.data
   }
 
@@ -29,7 +29,7 @@ export class VideoService {
     videoId: string,
     payload: VideoUploadCompleteRequest
   ): Promise<Video> {
-    const response = await api.post<Video>(`/videos/${videoId}/complete`, payload)
+    const response = await api.post<Video>(`/videos/${videoId}/complete`, payload, { timeout: 120000 })
     return response.data
   }
 
@@ -50,6 +50,7 @@ export class VideoService {
     formData.append('chunk_file', chunk, `chunk_${chunkIndex}`)
 
     const response = await api.post('/videos/upload/chunk', formData, {
+      timeout: 120000,
       headers: {
         'Content-Type': 'multipart/form-data',
       },

@@ -105,6 +105,25 @@ async def get_track_detail(
 
 
 @router.get(
+    "/{video_id}/all-trajectories",
+    summary="Get all trajectory timelines for a video",
+    description="Retrieve all tracked objects with trajectory coordinates for real-time video player overlay."
+)
+async def get_all_trajectories(
+    video_id: UUID,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Fetch all object trajectories for video"""
+    video = await video_service.get_video_by_id(db, video_id)
+    if not video:
+        raise NotFoundException(message="Video not found")
+
+    trajectories = await bytetrack_service.get_all_video_trajectories(db, video_id)
+    return trajectories
+
+
+@router.get(
     "/{video_id}/tracks/visualization",
     response_model=VisualizationResponse,
     summary="Get motion trajectory visualization payload",

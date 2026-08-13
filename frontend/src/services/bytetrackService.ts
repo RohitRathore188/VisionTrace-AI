@@ -1,60 +1,62 @@
-/**
- * ByteTrack API Service
- */
-
 import { api } from '@/lib/api'
-import {
-  TrackSummary,
-  TrackDetail,
-  VisualizationResponse,
-} from '@/types/bytetrack'
+import { TrackSummary, TrackDetail, VisualizationResponse, ByteTrackRunResponse } from '@/types/bytetrack'
+
+export interface TrajectoryPoint {
+  object_id: string
+  frame_id: string
+  frame_number: number
+  timestamp_seconds: number
+  confidence: number
+  bounding_box: {
+    xmin: number
+    ymin: number
+    xmax: number
+    ymax: number
+  }
+}
+
+export interface TrackData {
+  track_id: number
+  label: string
+  first_seen: number
+  last_seen: number
+  total_frames: number
+  trajectory: TrajectoryPoint[]
+}
+
+export interface VideoTrajectoriesResponse {
+  video_id: string
+  total_tracks: number
+  tracks: TrackData[]
+}
 
 export class ByteTrackService {
-  /**
-   * Run ByteTrack tracking on video detections
-   */
-  static async runTracking(videoId: string) {
-    const response = await api.post<{
-      video_id: string
-      total_frames_processed: number
-      objects_tracked: number
-      distinct_track_count: number
-      status: string
-    }>(`/videos/${videoId}/track-objects`)
-    return response.data
+  static async runTracking(videoId: string): Promise<ByteTrackRunResponse> {
+    const res = await api.post<ByteTrackRunResponse>(`/videos/${videoId}/track-objects`)
+    return res.data
   }
 
-  /**
-   * List distinct object motion tracks for video
-   */
   static async getTracks(videoId: string, minDetections = 1): Promise<TrackSummary[]> {
-    const response = await api.get<TrackSummary[]>(`/videos/${videoId}/tracks`, {
+    const res = await api.get<TrackSummary[]>(`/videos/${videoId}/tracks`, {
       params: { min_detections: minDetections },
     })
-    return response.data
+    return res.data
   }
 
-  /**
-   * Get detailed trajectory timeline for a specific track ID
-   */
   static async getTrackDetail(videoId: string, trackId: number): Promise<TrackDetail> {
-    const response = await api.get<TrackDetail>(`/videos/${videoId}/tracks/${trackId}`)
-    return response.data
+    const res = await api.get<TrackDetail>(`/videos/${videoId}/tracks/${trackId}`)
+    return res.data
   }
 
-  /**
-   * Get motion trajectory visualization payload (SVG polylines & 2D points)
-   */
-  static async getVisualization(
-    videoId: string,
-    trackId?: number
-  ): Promise<VisualizationResponse> {
-    const params: Record<string, any> = {}
-    if (trackId !== undefined) params.track_id = trackId
-
-    const response = await api.get<VisualizationResponse>(`/videos/${videoId}/tracks/visualization`, {
-      params,
+  static async getVisualization(videoId: string, trackId?: number): Promise<VisualizationResponse> {
+    const res = await api.get<VisualizationResponse>(`/videos/${videoId}/tracks/visualization`, {
+      params: trackId ? { track_id: trackId } : {},
     })
-    return response.data
+    return res.data
+  }
+
+  static async getAllTrajectories(videoId: string): Promise<VideoTrajectoriesResponse> {
+    const res = await api.get<VideoTrajectoriesResponse>(`/videos/${videoId}/all-trajectories`)
+    return res.data
   }
 }

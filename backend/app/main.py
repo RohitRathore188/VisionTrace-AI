@@ -92,6 +92,13 @@ def create_application() -> FastAPI:
     # Include routers
     app.include_router(api_router)
     
+    # Mount Static Files for Local Media Storage
+    from fastapi.staticfiles import StaticFiles
+    import os
+    data_dir = os.path.join(os.getcwd(), "data")
+    os.makedirs(data_dir, exist_ok=True)
+    app.mount("/data", StaticFiles(directory=data_dir), name="data")
+    
     # Root endpoint
     @app.get("/", include_in_schema=False)
     async def root():

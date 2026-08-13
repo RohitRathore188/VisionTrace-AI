@@ -33,6 +33,7 @@ export interface Video {
   createdAt: string
   updatedAt: string
   playbackUrl?: string
+  thumbnailUrl?: string
 }
 
 export interface VideoUploadInitRequest {

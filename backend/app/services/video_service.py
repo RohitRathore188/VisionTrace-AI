@@ -159,40 +159,99 @@ class VideoService:
         payload: VideoUploadCompleteRequest
     ) -> Video:
         """
-        Finalize video upload, update technical metadata, and transition status to COMPLETED.
-        (Does NOT perform frame extraction, as specified by requirements)
+        Finalize video upload, extract technical metadata with OpenCV, generate preview thumbnail,
+        and enqueue background AI processing pipeline.
         """
+        from app.services.frame_extractor import frame_extraction_service
+
         video = await self.get_video_by_id(db, video_id)
         if not video:
             raise ValueError("Video record not found")
 
-        # Update metadata
+        # Resolve local disk file path for OpenCV metadata extraction
         video.file_path = payload.file_path
-        video.file_size_bytes = payload.file_size_bytes
-        if payload.mime_type:
-            video.mime_type = payload.mime_type
-        if payload.duration_seconds is not None:
+        possible_paths = [
+            payload.file_path,
+            os.path.join(os.getcwd(), payload.file_path),
+            os.path.join(os.getcwd(), "data", "videos", payload.file_path),
+            os.path.join(os.getcwd(), "backend", "data", "videos", payload.file_path),
+        ]
+        
+        video_src = payload.file_path
+        for p in possible_paths:
+            if os.path.exists(p):
+                video_src = p
+                break
+
+        # Calculate file size from disk if available
+        if os.path.exists(video_src):
+            real_size = os.path.getsize(video_src)
+            if real_size > 0:
+                video.file_size_bytes = real_size
+
+        # Extract technical video metadata and preview thumbnail with OpenCV
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_src)
+            if cap.isOpened():
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+                duration = total_frames / fps if fps > 0 else 0.0
+
+                video.fps = round(fps, 2)
+                video.width = width
+                video.height = height
+                video.total_frames = total_frames
+                video.duration_seconds = round(duration, 2)
+
+                # Extract Preview Thumbnail at ~1.0 second mark
+                target_thumb_frame = min(int(fps * 1.0), total_frames - 1)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, target_thumb_frame))
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    frame_dir = os.path.join(os.getcwd(), "data", "frames", str(video_id))
+                    os.makedirs(frame_dir, exist_ok=True)
+                    thumb_path = os.path.join(frame_dir, "thumbnail.jpg")
+                    cv2.imwrite(thumb_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+
+                    thumb_url = f"http://localhost:8000/data/frames/{video_id}/thumbnail.jpg"
+                    if not video.metadata_json:
+                        video.metadata_json = {}
+                    video.metadata_json["thumbnail_url"] = thumb_url
+                
+                cap.release()
+            else:
+                logger.warning(f"OpenCV could not open video source for metadata: {video_src}")
+        except Exception as err:
+            logger.warning(f"Metadata / thumbnail extraction warning for video {video_id}: {err}")
+
+        # Ensure values are not zero if payload provides them
+        if not video.file_size_bytes and payload.file_size_bytes > 0:
+            video.file_size_bytes = payload.file_size_bytes
+        if not video.duration_seconds and payload.duration_seconds:
             video.duration_seconds = payload.duration_seconds
-        if payload.fps is not None:
-            video.fps = payload.fps
-        if payload.width is not None:
-            video.width = payload.width
-        if payload.height is not None:
-            video.height = payload.height
-        if payload.total_frames is not None:
-            video.total_frames = payload.total_frames
-        elif payload.duration_seconds and payload.fps:
-            video.total_frames = int(payload.duration_seconds * payload.fps)
-            
+
+        # Update metadata_json payload if provided
         if payload.metadata_json:
+            if not video.metadata_json:
+                video.metadata_json = {}
             video.metadata_json.update(payload.metadata_json)
 
-        # Transition status to COMPLETED (Ready for future indexing)
-        video.status = VideoStatus.COMPLETED
+        video.status = VideoStatus.PROCESSING
         video.error_message = None
 
         await db.commit()
         await db.refresh(video)
+
+        # Enqueue background pipeline: OpenCV Keyframe Extraction -> YOLO -> OpenCLIP Embeddings -> FAISS Index Sync
+        try:
+            await frame_extraction_service.enqueue_extraction(video_id=video.id, interval_seconds=1.0)
+            logger.info(f"Automatically enqueued background AI processing pipeline for video {video.id}")
+        except Exception as e:
+            logger.error(f"Failed to enqueue background processing for video {video.id}: {e}")
+
         return video
 
     async def get_video_by_id(self, db: AsyncSession, video_id: uuid.UUID) -> Optional[Video]:
@@ -247,8 +306,23 @@ class VideoService:
         return True
 
     def format_video_response(self, video: Video) -> VideoResponse:
-        """Format video database model into VideoResponse with playback URL"""
+        """Format video database model into VideoResponse with playback URL and thumbnail URL"""
         playback_url = storage_service.get_playback_url(video.file_path)
+        thumb_url = None
+        if video.metadata_json and isinstance(video.metadata_json, dict):
+            thumb_url = video.metadata_json.get("thumbnail_url")
+        if not thumb_url:
+            for p in [
+                os.path.join(os.getcwd(), "data", "frames", str(video.id), "thumbnail.jpg"),
+                os.path.join(os.getcwd(), "data", "frames", str(video.id), "frame_000000.jpg"),
+                os.path.join(os.getcwd(), "data", "frames", str(video.id), "frame_000060.jpg"),
+                os.path.join(os.getcwd(), "data", "frames", str(video.id), "frame_000360.jpg"),
+                os.path.join(os.path.dirname(os.getcwd()), "data", "frames", str(video.id), "thumbnail.jpg"),
+            ]:
+                if os.path.exists(p):
+                    thumb_url = f"http://localhost:8000/data/frames/{video.id}/{os.path.basename(p)}"
+                    break
+
         return VideoResponse(
             id=video.id,
             user_id=video.user_id,
@@ -267,7 +341,8 @@ class VideoService:
             metadata_json=video.metadata_json or {},
             created_at=video.created_at,
             updated_at=video.updated_at,
-            playback_url=playback_url
+            playback_url=playback_url,
+            thumbnail_url=thumb_url
         )
 
 
